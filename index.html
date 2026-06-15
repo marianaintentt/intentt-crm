@@ -669,7 +669,13 @@
       </div>
       <div class="form-row">
         <div class="form-group"><label>Assigned To</label><input type="text" id="f-assigned"></div>
-        <div class="form-group"><label>Proposal</label><input type="text" id="f-proposal"></div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Documents & Links</div>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="addLeadDocRow()">+ Add</button>
+        </div>
+        <div id="lead-doc-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1048,6 +1054,7 @@ function filterLog() { renderLog(); }
 
 // ── CLIENTS ──────────────────────────────────────────────
 let clientDocs = {}; // { company: [{name, url, type, notes, date}] }
+let leadDocs = {}; // same structure but keyed by company for leads
 
 const DOC_TYPE_COLORS = {
   'Contract':  { bg:'#0A2E22', fg:'#10B981' },
@@ -1335,6 +1342,74 @@ function saveClientEntry() {
   });
 }
 
+
+// ── LEAD DOCS ─────────────────────────────────────────────
+function addLeadDocRow() {
+  const rows = document.getElementById('lead-doc-rows');
+  if (!rows) return;
+  const id = Date.now();
+  const div = document.createElement('div');
+  div.dataset.id = id;
+  div.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;align-items:center';
+  div.innerHTML = `
+    <input type="text" placeholder="Name (e.g. Proposal v1)" class="lead-doc-name-${id}"
+      style="background:var(--surface);border:1px solid var(--border-light);border-radius:var(--radius);padding:7px 10px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">
+    <input type="text" placeholder="URL or Google Drive link" class="lead-doc-url-${id}"
+      style="background:var(--surface);border:1px solid var(--border-light);border-radius:var(--radius);padding:7px 10px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">
+    <select class="lead-doc-type-${id}" style="background:var(--surface);border:1px solid var(--border-light);border-radius:var(--radius);padding:7px 8px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">
+      <option>Proposal</option><option>Contract</option><option>Report</option><option>Deck</option><option>Other</option>
+    </select>
+    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:18px;padding:0 4px">×</button>
+  `;
+  rows.appendChild(div);
+}
+
+function collectLeadDocs() {
+  const rows = document.getElementById('lead-doc-rows');
+  if (!rows) return [];
+  const docs = [];
+  for (const div of rows.children) {
+    const id = div.dataset.id;
+    const name = div.querySelector(`.lead-doc-name-${id}`)?.value.trim();
+    const url  = div.querySelector(`.lead-doc-url-${id}`)?.value.trim();
+    const type = div.querySelector(`.lead-doc-type-${id}`)?.value;
+    if (name && url) docs.push({ name, url, type, notes: '', date: new Date().toISOString().split('T')[0] });
+  }
+  return docs;
+}
+
+function populateLeadDocRows(company) {
+  const rows = document.getElementById('lead-doc-rows');
+  if (!rows) return;
+  rows.innerHTML = '';
+  const docs = leadDocs[company] || [];
+  docs.forEach(d => {
+    addLeadDocRow();
+    const div = rows.lastElementChild;
+    const id = div.dataset.id;
+    div.querySelector(`.lead-doc-name-${id}`).value = d.name || '';
+    div.querySelector(`.lead-doc-url-${id}`).value = d.url || '';
+    div.querySelector(`.lead-doc-type-${id}`).value = d.type || 'Proposal';
+  });
+}
+
+function renderLeadDocsInDetail(company) {
+  const docs = leadDocs[company] || [];
+  if (!docs.length) return '<p style="font-size:13px;color:var(--text-dim)">No documents added yet.</p>';
+  const DOC_COLORS = { 'Contract':'var(--green)','Proposal':'var(--blue)','Report':'var(--purple)','Deck':'var(--orange)','Other':'var(--gray)' };
+  const DOC_BG = { 'Contract':'var(--green-bg)','Proposal':'var(--blue-bg)','Report':'var(--purple-bg)','Deck':'var(--orange-bg)','Other':'var(--gray-bg)' };
+  return docs.map(d => `
+    <div class="activity-mini" style="display:flex;align-items:center;gap:10px">
+      <span style="background:${DOC_BG[d.type]||'var(--surface2)'};color:${DOC_COLORS[d.type]||'var(--text-muted)'};font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap">${d.type}</span>
+      <div style="flex:1">
+        <div style="font-size:13px;color:var(--text)">${d.name}</div>
+        <div style="font-size:10px;color:var(--text-dim)">${d.date}</div>
+      </div>
+      <a href="${d.url}" target="_blank" style="color:var(--accent);font-size:12px;text-decoration:none;white-space:nowrap">Open →</a>
+    </div>
+  `).join('');
+}
+
 // ── SUMMARY ───────────────────────────────────────────────
 const STAGE_COLORS = {
   'Closed':'var(--green)','Proposal Sent':'var(--blue)','Negotiation':'var(--yellow)',
@@ -1517,6 +1592,13 @@ function openLead(idx) {
     ${l.notes ? `<div class="detail-section"><div class="detail-label">Notes</div><p style="font-size:13px;color:var(--text-muted);line-height:1.6">${l.notes}</p></div>` : ''}
     <div class="detail-section">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="detail-label" style="margin-bottom:0">Documents (${(leadDocs[l.company]||[]).length})</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal('lead-modal');openAddLead(${idx})">+ Add Doc</button>
+      </div>
+      ${renderLeadDocsInDetail(l.company)}
+    </div>
+    <div class="detail-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div class="detail-label" style="margin-bottom:0">Activity History (${myActivities.length})</div>
         <button class="btn btn-ghost btn-sm" onclick="openAddActivity(${idx});closeModal('lead-modal')">+ Log</button>
       </div>
@@ -1549,6 +1631,8 @@ function openAddLead(idx = null) {
       if (el) el.value = l[f] || '';
     });
   document.getElementById('add-lead-modal').classList.add('open');
+  // populate doc rows after modal opens
+  setTimeout(() => populateLeadDocRows(l.company || ''), 50);
 }
 
 function saveLead() {
@@ -1557,6 +1641,10 @@ function saveLead() {
   const data = {};
   fields.forEach(f => { data[f] = document.getElementById('f-' + f)?.value || ''; });
   if (!data.company) { alert('Company is required'); return; }
+
+  // save lead docs
+  const newDocs = collectLeadDocs();
+  if (newDocs.length) leadDocs[data.company] = newDocs;
 
   if (idx !== '') leads[parseInt(idx)] = data;
   else leads.push(data);
