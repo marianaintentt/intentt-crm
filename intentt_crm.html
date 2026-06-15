@@ -355,6 +355,7 @@
       <span class="logo-text" style="margin-left:6px;">CRM</span>
     </div>
     <div class="header-actions">
+      <span id="sync-status" style="font-size:11px;color:var(--text-dim);margin-right:4px"></span>
       <button class="btn btn-ghost btn-sm" onclick="exportCSV()">↓ Export</button>
       <button class="btn btn-primary btn-sm" onclick="openAddLead()">+ Add Lead</button>
     </div>
@@ -762,6 +763,118 @@ function togglePw() {
 }
 
 checkAuth();
+
+
+// ── APPS SCRIPT INTEGRATION ──────────────────────────────
+const APPS_URL = 'https://script.google.com/a/macros/intentt.com/s/AKfycbxUVwZTw_-9v5XmCS-R-uYQjs_qotEapRxpQQE3v6WVW8qGjZUhOcZfE0casyzwDptl/exec';
+let syncEnabled = false; // flips to true once first load succeeds
+
+async function loadFromSheet() {
+  try {
+    const res = await fetch(APPS_URL + '?action=getAll');
+    const data = await res.json();
+
+    if (data.leads && data.leads.length) {
+      leads = data.leads.map(r => ({
+        company:     r['Company'] || '',
+        contact:     r['Contact Name'] || '',
+        role:        r['Role'] || '',
+        email:       r['Email'] || '',
+        source:      r['Source'] || '',
+        event:       r['Event'] || '',
+        interested:  r['Interested In'] || '',
+        stage:       r['Lead Stage'] || 'New Lead',
+        lastContact: r['Last Contact'] || '',
+        nextStep:    r['Next Step'] || '',
+        notes:       r['Notes'] || '',
+        assigned:    r['Assigned To'] || '',
+        proposal:    r['Proposal'] || '',
+        dealPackage: r['Deal Package'] || '',
+        revenueOpp:  r['Revenue Opp'] || '',
+        confidence:  r['Confidence'] || '',
+      }));
+    }
+
+    if (data.activities && data.activities.length) {
+      activities = data.activities.map(r => ({
+        date:    r['Date'] || '',
+        company: r['Company'] || '',
+        contact: r['Contact Name'] || '',
+        type:    r['Activity Type'] || '',
+        summary: r['Summary'] || '',
+        nextStep: r['Next Step'] || '',
+        by:      r['Logged By'] || '',
+      }));
+    }
+
+    if (data.docs && data.docs.length) {
+      clientDocs = {};
+      data.docs.forEach(r => {
+        const c = r['Company'] || '';
+        if (!clientDocs[c]) clientDocs[c] = [];
+        clientDocs[c].push({
+          name:  r['Doc Name'] || '',
+          url:   r['URL'] || '',
+          type:  r['Type'] || '',
+          notes: r['Notes'] || '',
+          date:  r['Date'] || '',
+        });
+      });
+    }
+
+    if (data.timeline && data.timeline.length) {
+      // merge sheet timeline on top of seeded data
+      data.timeline.forEach(r => {
+        const c = r['Company'] || '';
+        if (!clientTimeline[c]) clientTimeline[c] = [];
+        let metrics = [];
+        try { metrics = JSON.parse(r['Metrics'] || '[]'); } catch(e) {}
+        clientTimeline[c].push({
+          type:     r['Type'] || 'weekly',
+          date:     r['Date'] || '',
+          title:    r['Title'] || '',
+          summary:  r['Summary'] || '',
+          metrics,
+          nextStep: r['Next Step'] || '',
+          by:       r['By'] || '',
+        });
+      });
+      // re-sort each client
+      for (const c in clientTimeline) {
+        clientTimeline[c].sort((a,b) => b.date.localeCompare(a.date));
+      }
+    }
+
+    syncEnabled = true;
+    showSyncStatus('✓ Synced with Sheet', 'var(--green)');
+  } catch(err) {
+    showSyncStatus('⚠ Offline — changes won\'t be saved', 'var(--yellow)');
+    console.warn('Sheet load failed:', err);
+  }
+
+  renderLeads();
+  renderLog();
+}
+
+async function pushToSheet(action, row) {
+  if (!syncEnabled) return;
+  try {
+    await fetch(APPS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action, row }),
+    });
+  } catch(err) {
+    console.warn('Sheet push failed:', err);
+  }
+}
+
+function showSyncStatus(msg, color) {
+  let el = document.getElementById('sync-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color;
+  if (color === 'var(--green)') setTimeout(() => { el.textContent = ''; }, 3000);
+}
 
 // ── DATA ─────────────────────────────────────────────────
 const STAGE_CLASS = {
@@ -1198,9 +1311,14 @@ function saveClientEntry() {
 
   closeModal('add-client-entry-modal');
   renderClients();
-  // reopen client detail
   const idx = leads.findIndex(l => l.company === company);
   if (idx >= 0) openClient(idx);
+  pushToSheet('saveTimeline', {
+    'Company': company, 'Type': entry.type, 'Date': entry.date,
+    'Title': entry.title, 'Summary': entry.summary,
+    'Metrics': JSON.stringify(entry.metrics),
+    'Next Step': entry.nextStep, 'By': entry.by,
+  });
 }
 
 // ── SUMMARY ───────────────────────────────────────────────
@@ -1433,6 +1551,16 @@ function saveLead() {
   renderLeads();
   renderSummary();
   renderLog();
+  // push to sheet
+  pushToSheet('saveLead', {
+    'Company': data.company, 'Contact Name': data.contact, 'Role': data.role,
+    'Email': data.email, 'Source': data.source, 'Event': data.event,
+    'Interested In': data.interested, 'Lead Stage': data.stage,
+    'Last Contact': data.lastContact, 'Next Step': data.nextStep,
+    'Notes': data.notes, 'Assigned To': data.assigned, 'Proposal': data.proposal,
+    'Deal Package': data.dealPackage, 'Revenue Opp': data.revenueOpp,
+    'Confidence': data.confidence,
+  });
 }
 
 // ── ADD ACTIVITY ──────────────────────────────────────────
@@ -1474,6 +1602,11 @@ function saveActivity() {
 
   closeModal('add-activity-modal');
   renderLeads(); renderLog(); renderSummary();
+  pushToSheet('saveActivity', {
+    'Date': a.date, 'Company': a.company, 'Contact Name': a.contact,
+    'Activity Type': a.type, 'Summary': a.summary,
+    'Next Step': a.nextStep, 'Logged By': a.by,
+  });
 }
 
 // ── UTILS ────────────────────────────────────────────────
@@ -1505,7 +1638,7 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 });
 
 // ── INIT ─────────────────────────────────────────────────
-renderLeads();
+loadFromSheet();
 </script>
 
 <!-- CLIENT WEEKLY UPDATE MODAL -->
