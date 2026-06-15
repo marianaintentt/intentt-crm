@@ -766,13 +766,25 @@ checkAuth();
 
 
 // ── APPS SCRIPT INTEGRATION ──────────────────────────────
-const APPS_URL = 'https://script.google.com/macros/s/AKfycbx5RiZz_yR-rbV8kO0DxsY2u4jsVtJAkD6p-vwKb0QCeBeq9jXu2ROsOwNwgTMzO9ZdEg/exec';
+const APPS_URL = 'https://script.google.com/macros/s/AKfycbzOQx3YnRlO5EqA673EqP1FAJx3rDOVrgpSkgl2Yl7MpexVGc662-wz9Y03acuUG_GlDg/exec';
 let syncEnabled = false; // flips to true once first load succeeds
 
 async function loadFromSheet() {
   try {
-    const res = await fetch(APPS_URL + '?action=getAll');
-    const data = await res.json();
+    // Use no-cors mode via script tag to bypass CORS restrictions
+    const data = await new Promise((resolve, reject) => {
+      const callbackName = 'crmCallback_' + Date.now();
+      const script = document.createElement('script');
+      window[callbackName] = (d) => {
+        delete window[callbackName];
+        document.head.removeChild(script);
+        resolve(d);
+      };
+      script.onerror = reject;
+      script.src = APPS_URL + '?action=getAll&callback=' + callbackName;
+      document.head.appendChild(script);
+      setTimeout(() => reject(new Error('timeout')), 10000);
+    });
 
     if (data.leads && data.leads.length) {
       leads = data.leads.map(r => ({
@@ -859,8 +871,10 @@ async function loadFromSheet() {
 async function pushToSheet(action, row) {
   if (!syncEnabled) return;
   try {
-    await fetch(APPS_URL, {
+    // no-cors: can't read response but data gets written to sheet
+    fetch(APPS_URL, {
       method: 'POST',
+      mode: 'no-cors',
       body: JSON.stringify({ action, row }),
     });
   } catch(err) {
